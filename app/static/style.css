@@ -574,3 +574,56 @@ body {
 @media (max-width: 900px) {
   .feas-row { grid-template-columns: 1fr; }
 }
+
+/* ---------------- 双来源事件对账抽屉 ---------------- */
+.recon-pairs { display: flex; flex-direction: column; gap: 6px; }
+.recon-pair {
+  display: grid; grid-template-columns: 1fr 150px 1fr; gap: 8px; align-items: stretch;
+  background: var(--bg-2); border: 1px solid #222d3b; border-radius: 8px; padding: 7px 10px;
+}
+.recon-cell { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.recon-cell.a { border-left: 3px solid #8fc0ff; padding-left: 8px; }
+.recon-cell.b { border-left: 3px solid #c1b0f5; padding-left: 8px; }
+.recon-cell-id { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.recon-cell-summary {
+  font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.recon-cell-range {
+  display: flex; justify-content: space-between; gap: 8px; align-items: center;
+  font-family: var(--mono); font-size: 10px; color: var(--muted);
+  border-left: 2px solid var(--line); padding-left: 6px; flex-wrap: wrap;
+}
+.recon-mid { color: #b9c6d6; }
+
+.recon-delta {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 2px; text-align: center;
+}
+.recon-delta-main { font-family: var(--mono); font-size: 15px; font-weight: 700; }
+.recon-delta-main.pos { color: #f0c273; }
+.recon-delta-main.neg { color: #8fc0ff; }
+.recon-delta-abs { font-family: var(--mono); font-size: 10.5px; color: var(--text); }
+.recon-delta-gap { font-family: var(--mono); font-size: 9.5px; color: var(--muted); }
+.recon-delta-gap.touch { color: #8ce0b4; }
+.recon-delta-type {
+  font-size: 9.5px; color: var(--muted); background: var(--bg-3);
+  border-radius: 9px; padding: 0 7px; margin-top: 2px;
+}
+
+.recon-unmatched { display: flex; flex-direction: column; gap: 4px; }
+.recon-um-row {
+  display: flex; gap: 8px; align-items: center; flex-wrap: wrap;
+  background: var(--bg-2); border: 1px solid #222d3b; border-radius: 7px;
+  padding: 5px 10px; font-size: 11.5px;
+}
+.recon-um-type {
+  font-size: 10px; color: var(--muted); background: var(--bg-3);
+  border-radius: 9px; padding: 0 7px;
+}
+.recon-um-summary { flex: 1; min-width: 120px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recon-um-range { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+
+@media (max-width: 900px) {
+  .recon-pair { grid-template-columns: 1fr; }
+  .recon-delta { flex-direction: row; flex-wrap: wrap; gap: 10px; }
+}

@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import engine, feasibility, retraction, scenarios, sensitivity
+from . import engine, feasibility, reconciliation, retraction, scenarios, sensitivity
 from .db import db, init_db
 from .importer import import_payload, reset_all
 
@@ -20,7 +20,7 @@ STATIC_DIR = BASE_DIR / "static"
 app = FastAPI(
     title="事件证据链审计台",
     description="导入多来源 JSON 事件记录，校正时钟偏差，重建可解释时间线并定位冲突链。",
-    version="1.4.0",
+    version="1.5.0",
 )
 
 
@@ -94,6 +94,14 @@ class SensitivityBody(BaseModel):
 
 class FeasibilityBody(BaseModel):
     """全局时序可行性：只接收假设 overrides；不接受任何筛选参数（始终全量联立）。"""
+    overrides: dict[str, SourceAssumption] = Field(default_factory=dict)
+
+
+class ReconcileBody(BaseModel):
+    """双来源事件对账：两个不同来源 + 非负容差（毫秒），可携带未保存假设。"""
+    source_a: str
+    source_b: str
+    tolerance_ms: Any                    # 在 reconcile 内严格校验（非负/有限/数值）
     overrides: dict[str, SourceAssumption] = Field(default_factory=dict)
 
 
@@ -436,6 +444,27 @@ def retraction_suggestions(body: FeasibilityBody) -> dict[str, Any]:
     result = retraction.suggest_retractions(overrides)
     result["overrides_applied"] = overrides
     return result
+
+
+# ----------------------------------------------------- 双来源事件对账
+
+@app.post("/api/source-reconciliation")
+def source_reconciliation(body: ReconcileBody) -> dict[str, Any]:
+    """两个不同来源的事件对账（只读，不写数据库、不合并记录、不新增约束）。
+
+    复用现有时钟校正区间（库存假设 + 页面未保存 overrides）；仅 actor 非空
+    且相同、event_type 相同、闭区间间距不超过容差（统一四舍五入到整数毫秒）
+    的事件可配对。每条事件最多参与一对：先最大化配对数，再最小化配对双方
+    区间中点差绝对值之和（全局最优，非逐条贪心），同优结果按事件 ID 稳定
+    输出。每侧最多 200 条事件，超限 / 同来源 / 负容差返回 4xx 明确拒绝。
+    """
+    overrides = {sid: v.model_dump(exclude_none=True)
+                 for sid, v in body.overrides.items()}
+    try:
+        return reconciliation.reconcile_sources(
+            body.source_a, body.source_b, body.tolerance_ms, overrides)
+    except reconciliation.ReconcileError as exc:
+        raise HTTPException(404 if "不存在" in str(exc) else 400, str(exc)) from exc
 
 
 # ----------------------------------------------------------------- 前端

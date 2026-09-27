@@ -28,6 +28,10 @@
 8. 无解时的**约束撤销建议**：沿矛盾路径搜索需撤销的最少人工/导入约束
    （source_order 时序边与事件区间不可撤销），每个候选用原求解器复核并附撤销后的
    全量可行见证；至多展示 5 个同样最少的方案，预览不写入数据库。
+9. **双来源事件对账**：选两个不同来源与非负容差，在复用现有校正区间的前提下
+   做跨来源事件一一配对（actor 相同 / 类型相同 / 闭区间间距不超过容差），
+   全局最优（先最大化配对数、再最小化中点差之和，非逐条贪心），并支持页面
+   未保存的时钟假设。
 
 ---
 
@@ -68,6 +72,7 @@ python tests/test_scenarios.py   # 纯标准库，覆盖方案快照 CRUD / 对�
 python tests/test_sensitivity.py # 纯标准库，覆盖偏移敏感性：临界点解析 / offset 抵消 / 区间差异 / 输入校验
 python tests/test_feasibility.py # 纯标准库，覆盖全局时序可行性：DAG 传播 / 环交集 / 矛盾路径 / 5000 事件无递归
 python tests/test_retraction.py  # 纯标准库，覆盖约束撤销建议：最少撤销 / 多解 / 平行边 / 保护与预算限制
+python tests/test_reconciliation.py # 纯标准库，覆盖双来源对账：整数毫秒四舍五入 / 闭区间间距 / 全局最优反贪心 / 同优稳定输出 / 200 上限与拒绝
 ```
 
 ---
@@ -169,6 +174,37 @@ python tests/test_retraction.py  # 纯标准库，覆盖约束撤销建议：最
    若 3 条以内无解但全撤可行，提示需要同时撤销更多约束；
 5. **只读预览**：建议不写入数据库、不改写任何事件或假设；确认后可到右栏
    「顺序约束」手动删除对应约束，或回左栏调整时钟假设后点 **⟳ 重新搜索** 重算。
+
+### 进一步：双来源事件对账（🔗）
+
+审计中常要回答："网关日志和应用日志记录的是不是同一批真实动作？"点右上
+**🔗 双来源对账**（API 为 `POST /api/source-reconciliation`）：
+
+1. 选择两个**不同来源**与一个**非负容差（毫秒）**，点 **▶ 开始对账**；
+   对账区间完全**复用现有校正区间**（库存假设 + 左栏当前**未保存**的 offset /
+   drift / uncertainty 调整），调整假设后点抽屉内 **⟳ 重新对账** 即可重算——
+   整个过程**只读：不新增约束、不合并记录、不写数据库**。
+   内置示例案件跨来源的事件（actor, 类型）互不相同，默认对账结果为 0 对
+   （两侧事件全部进入未匹配，这本身就是结论：没有同一动作的跨来源记录）；
+   也可导入两侧各含相同 `actor` + `type` 事件（如同一 `login_success` 被网关
+   与应用服务器分别记录）观察配对与中点差；
+2. 可配对条件（全部满足）：**actor 非空且两侧完全相同**（去首尾空白后区分大小写
+   精确相等）、**event_type 相同**、两侧真实时间**闭区间**的间距不超过容差；
+   区间端点、区间中点、闭区间间距、容差都先**四舍五入到整数毫秒**（half-up，
+   非银行家舍入）再做整数比较，浮点误差不会影响边界；
+3. **每条事件最多参与一对**，目标按字典序：① **最大化配对数**；
+   ② **最小化配对双方区间中点差绝对值之和**。后端逐 (actor, 类型) 分组做
+   **全局最优二分图匹配**（Kuhn 最大基数 + Kuhn–Munkres 匈牙利最小权匹配），
+   **不是逐条贪心**——最近邻贪心在 1 维时间线上会少配对（如 a1@0 只能配 b1@10、
+   a2@10 可配 b1/b2，贪心先抢 b1 会让 a1 失配）；同优结果按事件 ID 稳定输出，
+   同一请求永远得到同一结果；
+4. 页面分三块：**已配对事件**（两列事件卡 + 中点差 `B−A`、中点差绝对值与
+   闭区间间距，按 A 侧事件 ID 排序）、**A 侧未匹配**、**B 侧未匹配**
+   （标注 actor 为空 / 类型无对应 / 未获最优配对）；
+5. **点击任意事件 ID** 即关闭抽屉并在**主时间线**滚动高亮定位该事件；
+6. **每侧最多 200 条事件**：后端先按来源全量计数，任一侧超过 200 即返回
+   400 并明确告知两侧条数，**不做静默截断**；两侧选同一来源、来源不存在、
+   负 / 非数值 / NaN / 无穷容差同样以 4xx 明确拒绝。
 
 ---
 
@@ -282,6 +318,12 @@ gap ∈ [ lo_b - hi_a ,  hi_b - lo_a ]
   （source_order 边与事件区间不可撤销），原求解器逐候选复核；至多 5 个同样最少的方案，
   各附约束 ID、端点与撤销后全量可行见证；最多撤销 3 条、最多求解 2000 次，触限标未完成；
   预览不写库，支持按当前假设重新搜索。
+- **双来源事件对账**（右上 🔗）：选两个不同来源与非负容差（毫秒），复用现有校正区间
+  （含左栏未保存调整，可随时重新对账）；仅 actor 非空且相同、event_type 相同、闭区间间距
+  不超过容差（统一四舍五入到整数毫秒）的事件可配对；每条事件最多参与一对，先最大化配对数、
+  再最小化中点差绝对值之和（Kuhn+匈牙利全局最优，非逐条贪心），同优按事件 ID 稳定输出；
+  页面列出配对（中点差 / 闭区间间距）与两侧未匹配事件，点击任意 ID 回主时间线定位；
+  只读，不新增约束、不合并记录；每侧最多 200 条，超限明确拒绝。
 
 ---
 
@@ -310,6 +352,7 @@ gap ∈ [ lo_b - hi_a ,  hi_b - lo_a ]
 | POST | `/api/offset-sensitivity` | 偏移敏感性扫描：解析临界点 → 稳定区间 → 逐段重算并与当前结果对比 |
 | POST | `/api/temporal-feasibility` | 全局时序可行性：全量事件区间 × 全部约束联立求解，返回最早可行时刻见证或矛盾路径 |
 | POST | `/api/retraction-suggestions` | 约束撤销建议：沿矛盾路径搜索需撤销的最少人工/导入约束，原求解器复核，返回至多 5 个同样最少的方案及撤销后全量可行见证（只读预览） |
+| POST | `/api/source-reconciliation` | 双来源事件对账：复用校正区间（含未保存假设），按 actor/类型/闭区间容差做全局最优一一配对，返回配对（中点差/闭区间间距）与两侧未匹配事件（只读，每侧 ≤200，超限 400） |
 | GET | `/api/sample` | 下载内置示例 JSON |
 | POST | `/api/reset` | 清空全部数据 |
 | GET | `/api/health` | 健康检查（Compose healthcheck 使用） |
@@ -514,6 +557,55 @@ curl -o audit_result.json http://localhost:8000/api/export
   不能当作已穷尽的最优结论；`solutions_truncated=true` 表示同规模方案超过 5 个、仅展示前 5 个；
 - `solutions[].witness.events` 即撤销后全量可行见证（每个事件的最早可行时刻，形态同可行性检查）。
 
+`/api/source-reconciliation` 请求体与响应示例（只读；`overrides` 传页面当前含未保存的时钟假设）：
+
+```json
+// POST /api/source-reconciliation
+{"source_a": "gateway", "source_b": "app-server", "tolerance_ms": 1000,
+ "overrides": {"app-server": {"clock_offset": 60}}}
+```
+
+```json
+{
+  "reconcile_type": "dual-source-event-reconciliation",
+  "summary": "API 网关（A）3 条 × 业务应用服务器（B）3 条事件，在容差 ±1000 ms 内配对 2 对……",
+  "sides": {"a": {"source_id": "gateway", "source_name": "API 网关（NTP 校准）", "event_count": 3},
+            "b": {"source_id": "app-server", "source_name": "业务应用服务器（时钟可疑）", "event_count": 3}},
+  "tolerance_ms": 1000,
+  "pairs": [{
+    "actor": "user-4417", "event_type": "session.start",
+    "a": {"id": "g1", "source_id": "gateway", "event_type": "session.start", "actor": "user-4417",
+          "summary": "网关建立 TLS 会话", "lo_ms": 1789123299700, "hi_ms": 1789123300300,
+          "mid_ms": 1789123300000, "lo_text": "2026-09-18T08:01:39.700Z",
+          "hi_text": "2026-09-18T08:01:40.300Z", "mid_text": "2026-09-18T08:01:40.000Z"},
+    "b": {"id": "a1", "source_id": "app-server", "...": "..."},
+    "mid_delta_ms": -200,          // B 中点 − A 中点（整数毫秒，负=B 更早）
+    "mid_delta_abs_ms": 200,       // 目标函数 |Δmid|
+    "closed_gap_ms": 0,            // 两侧闭区间间距（相接/重叠为 0）
+    "within_tolerance": true
+  }],
+  "unmatched_a": [ /* 同 pair 单侧事件结构，按事件 ID 排序 */ ],
+  "unmatched_b": [ /* actor 为空 / 类型无对应 / 未获最优配对的事件 */ ],
+  "stats": {"events_a": 3, "events_b": 3, "candidate_edges": 4,
+            "matched_pairs": 2, "unmatched_a": 1, "unmatched_b": 1,
+            "matched_event_count": 4, "mid_delta_abs_sum_ms": 650},
+  "matching": {
+    "rule": "maximize pair count, then minimize sum of |interval-midpoint differences| ... no per-event greedy",
+    "pair_criteria": ["actor 非空且两侧完全相同（去空白、区分大小写）",
+                      "event_type 完全相同",
+                      "两侧闭区间 [lo,hi] 的间距不超过容差（整数毫秒）",
+                      "每条事件最多参与一对"],
+    "rounding": "区间端点 / 中点 / 闭区间间距 / 容差均四舍五入到整数毫秒（half-up）",
+    "limit_per_side": 200
+  }
+}
+```
+
+- `closed_gap_ms = max(0, lo_b − hi_a, lo_a − hi_b)`（整数毫秒）：区间相接或重叠即为 0，
+  因此容差 0 也允许区间重叠/相接的事件配对；`mid_delta_ms` 为 B 中点减 A 中点（带符号）；
+- 结果**按 A 侧事件 ID 稳定排序**（并列按 B 侧 ID），未匹配列表同样按 ID 排序；
+- 4xx：两侧相同 / 来源不存在（404）/ 容差为负或非有限数值 / 任一侧事件数 > 200（消息含实际条数）。
+
 交互式文档：启动后访问 `http://localhost:8000/docs`。
 
 ---
@@ -527,19 +619,21 @@ curl -o audit_result.json http://localhost:8000/api/export
 │   ├── engine.py        # 区间模型、边分类、约束传播、Tarjan 环、歧义聚类、稳定签名、导出
 │   ├── feasibility.py   # 全局时序可行性：差分约束联立求解（SCC + Kahn 最长路）、最早可行时刻见证、矛盾路径
 │   ├── retraction.py    # 约束撤销建议：沿矛盾路径的冲突驱动最小撤销搜索，原求解器复核，预算/深度限制
+│   ├── reconciliation.py # 双来源事件对账：复用校正区间，整数毫秒四舍五入，Kuhn+匈牙利全局最优一一配对（反贪心/稳定输出/每侧200）
 │   ├── scenarios.py     # 命名假设方案快照 CRUD、双方案重算差异（冲突/歧义/边/时间线/参数）
 │   ├── sensitivity.py   # 偏移敏感性：临界点解析求解、稳定区间切分、逐段重算与差异配对
 │   ├── importer.py      # 多别名宽松 JSON 规范化、幂等入库、来源时序边重建
 │   ├── db.py            # SQLite 连接、建表初始化（含 scenarios 表）
 │   ├── timeutil.py      # 多格式时间戳解析（秒/毫秒/微秒/纳秒、ISO、RFC2822）
 │   ├── sample.py        # 内置示例案件
-│   └── static/          # 原生前端 index.html / style.css / app.js / compare.js / sensitivity.js / feasibility.js / retraction.js
+│   └── static/          # 原生前端 index.html / style.css / app.js / compare.js / sensitivity.js / feasibility.js / retraction.js / reconciliation.js
 ├── examples/login-anomaly.json
 ├── tests/test_engine.py      # 纯标准库测试（11 项）
 ├── tests/test_scenarios.py   # 方案快照与双方案对比测试（12 项）
 ├── tests/test_sensitivity.py # 偏移敏感性扫描测试（9 项）
 ├── tests/test_feasibility.py # 全局时序可行性测试（11 项，含 5000 事件规模与深环无递归）
 ├── tests/test_retraction.py  # 约束撤销建议测试（12 项：最少撤销/多解/平行边/保护与预算限制）
+├── tests/test_reconciliation.py # 双来源事件对账测试（22 项：舍入/闭区间/反贪心/同优稳定/上限拒绝/未保存假设）
 ├── docker/entrypoint.sh # 启动钩子：初始化数据库后拉起 uvicorn
 ├── Dockerfile
 ├── docker-compose.yml
