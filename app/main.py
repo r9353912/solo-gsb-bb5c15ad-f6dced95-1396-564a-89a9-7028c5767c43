@@ -10,7 +10,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from . import engine, feasibility, retraction, scenarios, sensitivity
+from . import engine, feasibility, reconcile, retraction, scenarios, sensitivity
 from .db import db, init_db
 from .importer import import_payload, reset_all
 
@@ -20,7 +20,7 @@ STATIC_DIR = BASE_DIR / "static"
 app = FastAPI(
     title="事件证据链审计台",
     description="导入多来源 JSON 事件记录，校正时钟偏差，重建可解释时间线并定位冲突链。",
-    version="1.4.0",
+    version="1.5.0",
 )
 
 
@@ -94,6 +94,14 @@ class SensitivityBody(BaseModel):
 
 class FeasibilityBody(BaseModel):
     """全局时序可行性：只接收假设 overrides；不接受任何筛选参数（始终全量联立）。"""
+    overrides: dict[str, SourceAssumption] = Field(default_factory=dict)
+
+
+class ReconcileBody(BaseModel):
+    """双来源事件对账：两个不同来源 + 非负容差（毫秒）+ 页面未保存假设。"""
+    source_a: str
+    source_b: str
+    tolerance_ms: Any = 0                     # 非负容差（毫秒），在 reconcile 内严格校验
     overrides: dict[str, SourceAssumption] = Field(default_factory=dict)
 
 
@@ -434,6 +442,30 @@ def retraction_suggestions(body: FeasibilityBody) -> dict[str, Any]:
     overrides = {sid: v.model_dump(exclude_none=True)
                  for sid, v in body.overrides.items()}
     result = retraction.suggest_retractions(overrides)
+    result["overrides_applied"] = overrides
+    return result
+
+
+# ----------------------------------------------------- 双来源事件对账
+
+@app.post("/api/reconcile")
+def reconcile_events(body: ReconcileBody) -> dict[str, Any]:
+    """双来源事件对账（只读，不写数据库、不新增约束、不合并记录）。
+
+    把两个不同来源中 actor 相同（非空）、event_type 相同、且时钟校正
+    闭区间间距 ≤ 容差（毫秒）的事件配成一对一事件对：每条事件最多参与
+    一对，先最大化配对数、再最小化配对双方区间中点差绝对值之和
+    （最小费用最大流全局最优，非逐条贪心），同优结果按事件 ID 稳定输出。
+    每侧最多 200 条事件，超限明确拒绝；overrides 传页面当前（含未保存）
+    的时钟假设，调整假设后重新调用即可重新对账。
+    """
+    overrides = {sid: v.model_dump(exclude_none=True)
+                 for sid, v in body.overrides.items()}
+    try:
+        result = reconcile.reconcile(body.source_a, body.source_b,
+                                     body.tolerance_ms, overrides)
+    except reconcile.ReconcileError as exc:
+        raise HTTPException(404 if "不存在" in str(exc) else 400, str(exc)) from exc
     result["overrides_applied"] = overrides
     return result
 

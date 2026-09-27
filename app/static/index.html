@@ -21,6 +21,7 @@
       ＋ 导入 JSON
     </label>
     <button class="btn" id="btn-feasibility">🧭 全局时序可行性</button>
+    <button class="btn" id="btn-reconcile">🔀 双来源对账</button>
     <button class="btn" id="btn-compare">⚖ 方案对比</button>
     <button class="btn" id="btn-sensitivity">📈 偏移敏感性</button>
     <button class="btn" id="btn-export">⬇ 导出审计结果</button>
@@ -175,10 +176,46 @@
   </div>
 </div>
 
+<!-- 双来源事件对账抽屉 -->
+<div id="recon-overlay" class="overlay hidden" aria-hidden="true">
+  <div class="overlay-card">
+    <div class="overlay-head">
+      <h2>🔀 双来源事件对账</h2>
+      <p class="subtitle">选择两个不同来源与非负容差（毫秒）：把 <b>actor 相同且非空、事件类型相同、
+        时钟校正闭区间间距 ≤ 容差</b> 的事件配成一对一事件对（时间量四舍五入到整数毫秒）。
+        每条事件最多参与一对，<b>先最大化配对数、再最小化配对双方区间中点差绝对值之和</b>
+        （全局最优，非逐条贪心），同优结果按事件 ID 稳定输出。每侧最多 200 条事件。
+        只读分析：不新增约束、不合并记录；调整假设（含未保存）后点「▶ 对账」重新计算。</p>
+      <div class="overlay-actions">
+        <button class="btn tiny ghost" id="recon-close">✕ 关闭</button>
+      </div>
+    </div>
+
+    <div class="cmp-toolbar">
+      <div class="cmp-side-sel">
+        <span class="cmp-side-tag a">来源 A</span>
+        <select id="recon-src-a"></select>
+      </div>
+      <div class="cmp-side-sel">
+        <span class="cmp-side-tag b">来源 B</span>
+        <select id="recon-src-b"></select>
+      </div>
+      <div class="sens-range">
+        <label>容差(ms) <input type="number" id="recon-tol" min="0" step="any" value="500"></label>
+      </div>
+      <button class="btn tiny primary" id="recon-run">▶ 对账</button>
+      <span id="recon-hint" class="cmp-hint"></span>
+    </div>
+
+    <div id="recon-result" class="cmp-result"></div>
+  </div>
+</div>
+
 <script src="/static/app.js"></script>
 <script src="/static/compare.js"></script>
 <script src="/static/sensitivity.js"></script>
 <script src="/static/feasibility.js"></script>
 <script src="/static/retraction.js"></script>
+<script src="/static/reconcile.js"></script>
 </body>
 </html>
